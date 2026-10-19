@@ -101,12 +101,29 @@ def test_workload_status() -> None:
     assert ks._workload_status("DaemonSet", ds) == "online"
 
 
-def test_nodeport_service_entry() -> None:
+def test_nodeport_service_is_reached_on_a_node_ip() -> None:
     svc = _svc("web", {"app": "web"}, svc_type="NodePort")
     svc["status"] = {}
     svc["spec"]["ports"][0]["nodePort"] = 30080
-    entry = ks._service_entries(svc)[0]
-    assert entry["host"] == "10.96.0.5" and "30080" in entry["notes"]
+    entry = ks._service_entries(svc, "10.0.0.1")[0]
+    assert (entry["host"], entry["port"]) == ("10.0.0.1", 30080) and "NodePort" in entry["notes"]
+    assert ks._service_entries(svc, None) == []
+
+
+def test_clusterip_service_is_not_a_service_entry_but_is_listed() -> None:
+    svc = _svc("web", {"app": "web"}, svc_type="ClusterIP")
+    svc["status"] = {}
+    assert ks._service_entries(svc, "10.0.0.1") == []
+    nodes, _ = ks._parse_inventory(
+        "k", None, [_node("cp1", "10.0.0.1")],
+        {"deployments": [_deploy("web")], "statefulsets": [], "daemonsets": []},
+        [_pod("ReplicaSet", "web-5d8f7", "cp1")], [svc],
+    )
+    web = next(n for n in nodes if n["label"] == "web")
+    assert web["services"] == [] and web["internal_services"] == ["apps/web:80"]
+    props = ks.build_kubernetes_properties(web)
+    assert {"key": "Internal Services", "value": "apps/web:80", "icon": None, "visible": False} in props
+    assert "selected_services" not in web
 
 
 def test_properties_hidden_and_sourced() -> None:
