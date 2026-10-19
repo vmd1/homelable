@@ -1,0 +1,38 @@
+# Read-only ServiceAccount for the Homelable Kubernetes import.
+#   kubectl apply -f kubernetes-readonly-rbac.yaml
+#   kubectl -n homelable create token homelable --duration=8760h   # use as KUBERNETES_TOKEN
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: homelable
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: homelable
+  namespace: homelable
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: homelable-readonly
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "services", "namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: homelable-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: homelable-readonly
+subjects:
+  - kind: ServiceAccount
+    name: homelable
+    namespace: homelable

@@ -33,9 +33,15 @@ vi.mock('@/api/client', () => ({
     saveConfig: vi.fn(),
     syncNow: vi.fn(),
   },
+  // Not configured unless a test opts in, so the other sections stay unambiguous.
+  kubernetesApi: {
+    getConfig: vi.fn(() => Promise.reject(new Error('not configured'))),
+    saveConfig: vi.fn(),
+    syncNow: vi.fn(),
+  },
 }))
 
-import { settingsApi, proxmoxApi, zigbeeApi, zwaveApi, unifiApi, unraidApi } from '@/api/client'
+import { settingsApi, proxmoxApi, zigbeeApi, zwaveApi, unifiApi, unraidApi, kubernetesApi } from '@/api/client'
 import { toast } from 'sonner'
 import { useCanvasStore } from '@/stores/canvasStore'
 
@@ -476,6 +482,69 @@ describe('SettingsModal - Unraid', () => {
     await waitFor(() => {
       expect(unraidApi.syncNow).toHaveBeenCalledOnce()
       expect(toast.success).toHaveBeenCalledWith('Unraid sync started')
+    })
+  })
+})
+
+describe('SettingsModal - Kubernetes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(settingsApi.get).mockResolvedValue({ data: { interval_seconds: 60, service_check_enabled: false, service_check_interval: 300 } } as never)
+    vi.mocked(settingsApi.save).mockResolvedValue({ data: {} } as never)
+    vi.mocked(proxmoxApi.getConfig).mockRejectedValue(new Error('not configured'))
+    vi.mocked(unraidApi.getConfig).mockRejectedValue(new Error('not configured'))
+    vi.mocked(zigbeeApi.getConfig).mockRejectedValue(new Error('not configured'))
+    vi.mocked(zwaveApi.getConfig).mockRejectedValue(new Error('not configured'))
+    vi.mocked(unifiApi.getConfig).mockRejectedValue(new Error('not configured'))
+    vi.mocked(kubernetesApi.saveConfig).mockResolvedValue({ data: {} } as never)
+    vi.mocked(kubernetesApi.syncNow).mockResolvedValue({ data: { status: 'running' } } as never)
+    vi.mocked(toast.success).mockReset()
+  })
+
+  const config = (over = {}) => ({
+    data: {
+      api_url: 'https://k8s.lan:6443', verify_tls: true, namespaces: [], include_system: false,
+      sync_enabled: true, sync_interval: 3600, include_offline: true, token_configured: true, ...over,
+    },
+  })
+
+  it('persists the not-ready choice with the sync fields', async () => {
+    vi.mocked(kubernetesApi.getConfig).mockResolvedValue(config() as never)
+    render(<SettingsModal open onClose={vi.fn()} />)
+    const offline = await screen.findByLabelText('Include not-ready Kubernetes nodes and workloads')
+    await waitFor(() => expect(offline).toBeChecked())
+    fireEvent.click(offline)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => {
+      expect(kubernetesApi.saveConfig).toHaveBeenCalledWith({ sync_enabled: true, sync_interval: 3600, include_offline: false })
+    })
+  })
+
+  it('clamps a typed sync interval into the range the backend accepts', async () => {
+    vi.mocked(kubernetesApi.getConfig).mockResolvedValue(config() as never)
+    render(<SettingsModal open onClose={vi.fn()} />)
+    const input = await screen.findByLabelText('Kubernetes sync interval')
+    await waitFor(() => expect(input).toHaveValue(3600))
+    fireEvent.change(input, { target: { value: '100' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(kubernetesApi.saveConfig).toHaveBeenCalled())
+    expect(vi.mocked(kubernetesApi.saveConfig).mock.calls[0][0].sync_interval).toBe(300)
+  })
+
+  it('shows the env vars to set when no cluster is configured', async () => {
+    vi.mocked(kubernetesApi.getConfig).mockResolvedValue(config({ token_configured: false }) as never)
+    render(<SettingsModal open onClose={vi.fn()} />)
+    await screen.findByText('KUBERNETES_TOKEN')
+    expect(screen.queryByLabelText('Toggle Kubernetes auto-sync')).toBeNull()
+  })
+
+  it('triggers an immediate sync from Re-sync now', async () => {
+    vi.mocked(kubernetesApi.getConfig).mockResolvedValue(config() as never)
+    render(<SettingsModal open onClose={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Re-sync now' }))
+    await waitFor(() => {
+      expect(kubernetesApi.syncNow).toHaveBeenCalledOnce()
+      expect(toast.success).toHaveBeenCalledWith('Kubernetes sync started')
     })
   })
 })

@@ -5,11 +5,13 @@ import {
   settingsApi,
   proxmoxApi,
   unraidApi,
+  kubernetesApi,
   zigbeeApi,
   zwaveApi,
   unifiApi,
   type ProxmoxConfigData,
   type UnraidConfigData,
+  type KubernetesConfigData,
   type ZigbeeConfigData,
   type ZwaveConfigData,
   type UnifiConfigData,
@@ -128,6 +130,9 @@ const UNIFI_MAX_INTERVAL = 86400
 // Mirrors UnraidSyncConfig.sync_interval (ge=300, le=86400) on the backend.
 const UNRAID_MIN_INTERVAL = 300
 const UNRAID_MAX_INTERVAL = 86400
+// Mirrors KubernetesSyncConfig.sync_interval (ge=300, le=86400) on the backend.
+const K8S_MIN_INTERVAL = 300
+const K8S_MAX_INTERVAL = 86400
 
 const UNIFI_SOURCES: { key: keyof UnifiImportModes; label: string; hint: string }[] = [
   { key: 'infrastructure', label: 'Infrastructure', hint: 'stat/device — adopted APs, switches, gateways.' },
@@ -152,6 +157,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [urInterval, setUrInterval] = useState(3600)
   const [urIncludeOffline, setUrIncludeOffline] = useState(true)
   const [urSyncing, setUrSyncing] = useState(false)
+  const [k8sConfig, setK8sConfig] = useState<KubernetesConfigData | null>(null)
+  const [k8sSyncEnabled, setK8sSyncEnabled] = useState(false)
+  const [k8sInterval, setK8sInterval] = useState(3600)
+  const [k8sIncludeOffline, setK8sIncludeOffline] = useState(true)
+  const [k8sSyncing, setK8sSyncing] = useState(false)
   const [zbConfig, setZbConfig] = useState<ZigbeeConfigData | null>(null)
   const [zbSyncEnabled, setZbSyncEnabled] = useState(false)
   const [zbInterval, setZbInterval] = useState(3600)
@@ -204,6 +214,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         setUrIncludeOffline(res.data.include_offline)
       })
       .catch(() => {/* unraid not configured */})
+    kubernetesApi.getConfig()
+      .then((res) => {
+        setK8sConfig(res.data)
+        setK8sSyncEnabled(res.data.sync_enabled)
+        setK8sInterval(res.data.sync_interval)
+        setK8sIncludeOffline(res.data.include_offline)
+      })
+      .catch(() => {/* kubernetes not configured */})
     zigbeeApi.getConfig()
       .then((res) => {
         setZbConfig(res.data)
@@ -253,6 +271,18 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       toast.error('Failed to start Proxmox sync')
     } finally {
       setPmSyncing(false)
+    }
+  }
+
+  const handleK8sSyncNow = async () => {
+    setK8sSyncing(true)
+    try {
+      await kubernetesApi.syncNow()
+      toast.success('Kubernetes sync started')
+    } catch {
+      toast.error('Failed to start Kubernetes sync')
+    } finally {
+      setK8sSyncing(false)
     }
   }
 
@@ -337,6 +367,16 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           sync_enabled: urSyncEnabled,
           sync_interval: clamped,
           include_offline: urIncludeOffline,
+        })
+      }
+      if (k8sConfig) {
+        // Connection config (API URL/token/CA) is env-only; clamp as for Unraid.
+        const clamped = Math.min(K8S_MAX_INTERVAL, Math.max(K8S_MIN_INTERVAL, Math.round(k8sInterval)))
+        if (clamped !== k8sInterval) setK8sInterval(clamped)
+        await kubernetesApi.saveConfig({
+          sync_enabled: k8sSyncEnabled,
+          sync_interval: clamped,
+          include_offline: k8sIncludeOffline,
         })
       }
       if (zbConfig) {
@@ -714,6 +754,72 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     className="h-7 text-xs border-[#e22828] text-[#e22828] hover:bg-[#e22828]/10"
                   >
                     {urSyncing ? 'Syncing...' : 'Re-sync now'}
+                  </Button>
+                  <span className="text-[10px] text-muted-foreground leading-tight">
+                    Runs one import immediately using the server .env config.
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+          )}
+          {/* Kubernetes auto-sync */}
+          {!STANDALONE && k8sConfig && (
+          <div className="pt-3 border-t border-border space-y-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Kubernetes auto-sync</span>
+            {!(k8sConfig.token_configured && k8sConfig.api_url) ? (
+              <p className="text-[10px] text-[#e3b341] leading-tight">
+                No Kubernetes cluster configured. Set <span className="font-mono">KUBERNETES_API_URL</span> and{' '}
+                <span className="font-mono">KUBERNETES_TOKEN</span> in the server .env to enable auto-sync.
+              </p>
+            ) : (
+              <>
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <span className="text-xs text-foreground">Auto-sync Kubernetes nodes and workloads</span>
+                  <input
+                    type="checkbox"
+                    checked={k8sSyncEnabled}
+                    onChange={(e) => setK8sSyncEnabled(e.target.checked)}
+                    className="cursor-pointer accent-[#326ce5]"
+                    aria-label="Toggle Kubernetes auto-sync"
+                  />
+                </label>
+                <div className={k8sSyncEnabled ? 'space-y-1.5' : 'space-y-1.5 opacity-50 pointer-events-none'}>
+                  <label className="text-xs text-muted-foreground">Sync interval (s)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={300}
+                      max={86400}
+                      value={k8sInterval}
+                      onChange={(e) => { const v = Number(e.target.value); if (!isNaN(v)) setK8sInterval(v) }}
+                      className="w-24 px-2 py-1 rounded-md text-xs font-mono bg-[#0d1117] border border-border text-foreground focus:outline-none focus:border-[#326ce5]"
+                      aria-label="Kubernetes sync interval"
+                    />
+                    <span className="text-xs text-muted-foreground">seconds</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-tight">
+                    Re-imports the cluster nodes and workloads into the pending inventory. Min 300s (5 min).
+                  </p>
+                </div>
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <span className="text-xs text-foreground">Include NotReady nodes and not-ready workloads</span>
+                  <input
+                    type="checkbox"
+                    checked={k8sIncludeOffline}
+                    onChange={(e) => setK8sIncludeOffline(e.target.checked)}
+                    className="cursor-pointer accent-[#326ce5]"
+                    aria-label="Include not-ready Kubernetes nodes and workloads"
+                  />
+                </label>
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    variant="outline"
+                    onClick={handleK8sSyncNow}
+                    disabled={k8sSyncing}
+                    className="h-7 text-xs border-[#326ce5] text-[#326ce5] hover:bg-[#326ce5]/10"
+                  >
+                    {k8sSyncing ? 'Syncing...' : 'Re-sync now'}
                   </Button>
                   <span className="text-[10px] text-muted-foreground leading-tight">
                     Runs one import immediately using the server .env config.

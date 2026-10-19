@@ -679,7 +679,7 @@ async def list_proxmox_children(
             await db.execute(
                 select(InventoryDeviceLink.target_ieee).where(
                     InventoryDeviceLink.source_ieee == device.ieee_address,
-                    InventoryDeviceLink.discovery_source.in_(("proxmox", "unraid")),
+                    InventoryDeviceLink.discovery_source.in_(("proxmox", "unraid", "kubernetes")),
                 )
             )
         )
@@ -1161,9 +1161,10 @@ async def _resolve_pending_links_for_ieee(
         # handle, so never emit one.
         #   proxmox         → 'virtual' host→guest, vertical (bottom → top)
         #   unraid          -> 'virtual' host->container, same shape
+        #   kubernetes      -> 'virtual' node->workload, same shape
         #   proxmox_cluster → 'cluster' host↔host, horizontal (right → left)
         #   anything else   → 'iot' mesh link, vertical
-        if link.discovery_source in ("proxmox", "unraid"):
+        if link.discovery_source in ("proxmox", "unraid", "kubernetes"):
             edge_type, src_handle, tgt_handle = "virtual", "bottom", "top"
         elif link.discovery_source == "proxmox_cluster":
             edge_type, src_handle, tgt_handle = "cluster", "right", "left"

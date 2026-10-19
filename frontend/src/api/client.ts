@@ -375,6 +375,46 @@ export const unraidApi = {
   syncNow: () => api.post<ScanRunResult>('/unraid/sync-now'),
 }
 
+export interface KubernetesConnection {
+  api_url: string
+  token?: string
+  verify_tls?: boolean
+  /** Only these namespaces; empty = all but the system ones. */
+  namespaces?: string[]
+  include_system?: boolean
+  /** Import (and list) NotReady nodes and not-ready workloads too. */
+  include_offline?: boolean
+}
+
+export interface KubernetesConfigData {
+  api_url: string
+  verify_tls: boolean
+  namespaces: string[]
+  include_system: boolean
+  sync_enabled: boolean
+  sync_interval: number
+  include_offline: boolean
+  token_configured: boolean
+}
+
+export const kubernetesApi = {
+  testConnection: (data: KubernetesConnection) =>
+    api.post<{ connected: boolean; message: string }>('/kubernetes/test-connection', data),
+
+  importNetwork: (data: KubernetesConnection) =>
+    api.post<import('@/components/kubernetes/types').KubernetesImportResponse>('/kubernetes/import', data),
+
+  importToPending: (data: KubernetesConnection) =>
+    api.post<ScanRunResult>('/kubernetes/import-pending', data),
+
+  getConfig: () => api.get<KubernetesConfigData>('/kubernetes/config'),
+  // Only the auto-sync activation is persisted; connection config is env-only.
+  saveConfig: (data: { sync_enabled: boolean; sync_interval: number; include_offline: boolean }) =>
+    api.post<KubernetesConfigData>('/kubernetes/config', data),
+
+  syncNow: () => api.post<ScanRunResult>('/kubernetes/sync-now'),
+}
+
 export const designsApi = {
   list: () => api.get<import('@/types').Design[]>('/designs'),
   create: (data: { name: string; icon?: string; design_type?: string }) =>

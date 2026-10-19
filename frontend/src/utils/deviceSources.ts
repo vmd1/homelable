@@ -7,13 +7,14 @@
  */
 import type { InventoryEntry } from '@/components/modals/InventoryDeviceModal'
 
-export type SourceBucket = 'ip' | 'zigbee' | 'zwave' | 'proxmox' | 'unraid' | 'unifi' | 'rack' | 'canvas'
+export type SourceBucket = 'ip' | 'zigbee' | 'zwave' | 'proxmox' | 'unraid' | 'kubernetes' | 'unifi' | 'rack' | 'canvas'
 
 export const SOURCE_META: Record<SourceBucket, { color: string; label: string }> = {
   zigbee: { color: '#00d4ff', label: 'ZIGBEE' },
   zwave: { color: '#ff6e00', label: 'Z-WAVE' },
   proxmox: { color: '#e57000', label: 'PROXMOX' },
   unraid: { color: '#e22828', label: 'UNRAID' },
+  kubernetes: { color: '#326ce5', label: 'K8S' },
   unifi: { color: '#0559c9', label: 'UNIFI' },
   ip: { color: '#a855f7', label: 'IP' },
   rack: { color: '#39d353', label: 'RACK' },
@@ -22,7 +23,7 @@ export const SOURCE_META: Record<SourceBucket, { color: string; label: string }>
 }
 
 // Stable badge order (IP first — it's the primary discovery path).
-const SOURCE_ORDER: SourceBucket[] = ['ip', 'proxmox', 'unraid', 'unifi', 'zigbee', 'zwave', 'rack', 'canvas']
+const SOURCE_ORDER: SourceBucket[] = ['ip', 'proxmox', 'unraid', 'kubernetes', 'unifi', 'zigbee', 'zwave', 'rack', 'canvas']
 
 /** Every source bucket that has observed this device. A device found by both an
  *  IP scan and a Proxmox import returns {ip, proxmox}. */
@@ -36,6 +37,7 @@ export function sourceBuckets(d: InventoryEntry): Set<SourceBucket> {
     else if (s === 'zigbee') buckets.add('zigbee')
     else if (s === 'proxmox') buckets.add('proxmox')
     else if (s === 'unraid') buckets.add('unraid')
+    else if (s === 'kubernetes') buckets.add('kubernetes')
     // UniFi infrastructure ('unifi') and clients ('unifi-client') share one
     // bucket — the type filter already separates ap/switch/router from hosts.
     else if (s === 'unifi' || s === 'unifi-client') buckets.add('unifi')

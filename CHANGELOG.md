@@ -5,6 +5,12 @@ All notable changes to **Homelable** are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Features
+
+- Kubernetes import. A new backend service and router read the cluster API with a read-only ServiceAccount token and bring the nodes, Deployments, StatefulSets and DaemonSets into the Device Inventory (and optionally onto the canvas), with node -> workload links and the Services that select each workload. Configured under Import > Kubernetes, with optional scheduled sync in Settings. See `docs/kubernetes-import.md`.
+
 ## [3.6.0] - 2026-10-07
 
 ### Features
