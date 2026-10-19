@@ -19,10 +19,12 @@ onto the canvas). It can also **sync** on a schedule.
   counts as offline).
 - **Node -> workload links** as `virtual` edges: each workload is linked from
   every node running one of its pods.
-- **Kubernetes Services** as service entries on the workloads they select:
-  the LoadBalancer IP (or external IP) when there is one, else the ClusterIP;
-  a NodePort is noted. Re-imports refresh the address but keep a name or icon
-  you gave it.
+- **Kubernetes Services** that select a workload and are reachable from outside
+  the cluster become service entries: the LoadBalancer IP (or an external IP),
+  or a NodePort on a node running the workload. A ClusterIP is not reachable
+  from Homelable, so it is not a service entry (a check against it would only
+  fail); those Services are listed in a hidden **Internal Services** property.
+  Re-imports refresh the address but keep a name or icon you gave it.
 
 `kube-system`, `kube-public` and `kube-node-lease` are skipped unless you tick
 **Include system namespaces** (or list them in the namespace allowlist).
