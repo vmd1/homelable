@@ -31,6 +31,7 @@ import { ZigbeeImportModal } from '@/components/zigbee/ZigbeeImportModal'
 import { ZwaveImportModal } from '@/components/zwave/ZwaveImportModal'
 import { ProxmoxImportModal } from '@/components/proxmox/ProxmoxImportModal'
 import { UnraidImportModal } from '@/components/unraid/UnraidImportModal'
+import { KubernetesImportModal } from '@/components/kubernetes/KubernetesImportModal'
 import { UnifiImportModal } from '@/components/unifi/UnifiImportModal'
 import { ImportSourceModal, type ImportSourceKey } from '@/components/modals/ImportSourceModal'
 import { GroupRectModal, type GroupRectFormData } from '@/components/modals/GroupRectModal'
@@ -73,6 +74,7 @@ import type { ZigbeeNode, ZigbeeEdge } from '@/components/zigbee/types'
 import type { ZwaveNode, ZwaveEdge } from '@/components/zwave/types'
 import type { ProxmoxNode, ProxmoxEdge, ProxmoxCanvasMode } from '@/components/proxmox/types'
 import type { UnraidNode, UnraidEdge } from '@/components/unraid/types'
+import type { KubernetesNode, KubernetesEdge } from '@/components/kubernetes/types'
 import { buildProxmoxClusterEdges } from '@/components/proxmox/clusterEdges'
 import { groupProxmoxGuests, layoutProxmoxContainers, measureProxmoxContainers } from '@/utils/proxmoxContainerLayout'
 
@@ -165,6 +167,7 @@ export default function App() {
   const [zwaveImportOpen, setZwaveImportOpen] = useState(false)
   const [proxmoxImportOpen, setProxmoxImportOpen] = useState(false)
   const [unraidImportOpen, setUnraidImportOpen] = useState(false)
+  const [kubernetesImportOpen, setKubernetesImportOpen] = useState(false)
   const [unifiImportOpen, setUnifiImportOpen] = useState(false)
   const [importPickerOpen, setImportPickerOpen] = useState(false)
 
@@ -378,6 +381,7 @@ export default function App() {
     else if (source === 'zwave') setZwaveImportOpen(true)
     else if (source === 'proxmox') setProxmoxImportOpen(true)
     else if (source === 'unraid') setUnraidImportOpen(true)
+    else if (source === 'kubernetes') setKubernetesImportOpen(true)
     else setUnifiImportOpen(true)
   }, [])
 
@@ -1086,16 +1090,23 @@ export default function App() {
     markUnsaved()
   }, [addNode, onConnect, snapshotHistory, markUnsaved])
 
-  const handleUnraidAddToCanvas = useCallback((urNodes: UnraidNode[], urEdges: UnraidEdge[]) => {
+  // Shared by the Unraid and Kubernetes imports: the host row(s) on top, the
+  // guests (VMs first, then containers/workloads) in a grid below, host->guest
+  // links as 'virtual' edges.
+  const addHostWithGuests = useCallback((
+    urNodes: Array<UnraidNode | KubernetesNode>,
+    urEdges: Array<UnraidEdge | KubernetesEdge>,
+    hostType: string,
+  ) => {
     snapshotHistory()
     const COLS = 6
     const SPACING_X = 190
     const SPACING_Y = 110
     // The server on its own row, its VMs then its containers in a grid below.
-    const hosts = urNodes.filter((n) => n.type === 'docker_host')
+    const hosts = urNodes.filter((n) => n.type === hostType)
     const containers = [
       ...urNodes.filter((n) => n.type === 'vm'),
-      ...urNodes.filter((n) => n.type === 'docker_container'),
+      ...urNodes.filter((n) => n.type !== hostType && n.type !== 'vm'),
     ]
     const cols = Math.min(COLS, Math.max(containers.length, 1))
     const rows = Math.ceil(containers.length / COLS) + (hosts.length ? 1 : 0)
@@ -1150,6 +1161,16 @@ export default function App() {
     }))
     markUnsaved()
   }, [addNode, onConnect, snapshotHistory, markUnsaved])
+
+  const handleUnraidAddToCanvas = useCallback(
+    (urNodes: UnraidNode[], urEdges: UnraidEdge[]) => addHostWithGuests(urNodes, urEdges, 'docker_host'),
+    [addHostWithGuests],
+  )
+
+  const handleKubernetesAddToCanvas = useCallback(
+    (k8sNodes: KubernetesNode[], k8sEdges: KubernetesEdge[]) => addHostWithGuests(k8sNodes, k8sEdges, 'server'),
+    [addHostWithGuests],
+  )
 
   const handleEdgeConnect = useCallback((connection: Connection) => {
     setPendingConnection(connection)
@@ -1433,6 +1454,17 @@ export default function App() {
             onAddToCanvas={handleUnraidAddToCanvas}
             onInventoryImported={() => {
               toast.success('Unraid import started - check Scan History for results')
+            }}
+          />
+        )}
+
+        {!STANDALONE && (
+          <KubernetesImportModal
+            open={kubernetesImportOpen}
+            onClose={() => setKubernetesImportOpen(false)}
+            onAddToCanvas={handleKubernetesAddToCanvas}
+            onInventoryImported={() => {
+              toast.success('Kubernetes import started - check Scan History for results')
             }}
           />
         )}

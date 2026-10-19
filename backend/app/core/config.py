@@ -241,6 +241,20 @@ class Settings(BaseSettings):
     # Import stopped containers on auto-sync / sync-now too.
     unraid_sync_include_offline: bool = True
 
+    # Kubernetes import (cluster nodes + Deployments/StatefulSets/DaemonSets). The
+    # ServiceAccount token is a credential -> env/.env ONLY, never persisted by
+    # the app and never returned by the API. Only the auto-sync activation is
+    # persisted.
+    kubernetes_api_url: str = ""  # e.g. https://192.168.1.10:6443
+    kubernetes_token: str = ""
+    kubernetes_verify_tls: bool = True
+    kubernetes_ca_file: str = ""  # path to the cluster CA bundle (used when verifying)
+    kubernetes_namespaces: str = ""  # comma-separated allowlist; empty = all but system
+    kubernetes_include_system: bool = False  # kube-system & co. when no allowlist is set
+    kubernetes_sync_enabled: bool = False
+    kubernetes_sync_interval: int = 3600  # seconds (floor 300 enforced on write)
+    kubernetes_sync_include_offline: bool = True
+
     # Zigbee2MQTT auto-sync import.
     # MQTT credentials are secrets → env/.env ONLY, never persisted by the app to
     # scan_config.json and never returned by the API. Only the auto-sync
@@ -307,6 +321,11 @@ class Settings(BaseSettings):
         return self.unifi_host
 
     @property
+    def kubernetes_namespace_list(self) -> list[str]:
+        """KUBERNETES_NAMESPACES as a clean list (empty = no allowlist)."""
+        return [n.strip() for n in self.kubernetes_namespaces.split(",") if n.strip()]
+
+    @property
     def unraid_effective_port(self) -> int:
         """UNRAID_PORT if set, else the default port of the configured scheme."""
         return self.unraid_port or (443 if self.unraid_use_https else 80)
@@ -362,6 +381,13 @@ class Settings(BaseSettings):
                 self.unraid_sync_interval = int(data["unraid_sync_interval"])
             if "unraid_sync_include_offline" in data:
                 self.unraid_sync_include_offline = bool(data["unraid_sync_include_offline"])
+            # Kubernetes: auto-sync activation only, same reason as Proxmox.
+            if "kubernetes_sync_enabled" in data:
+                self.kubernetes_sync_enabled = bool(data["kubernetes_sync_enabled"])
+            if "kubernetes_sync_interval" in data:
+                self.kubernetes_sync_interval = int(data["kubernetes_sync_interval"])
+            if "kubernetes_sync_include_offline" in data:
+                self.kubernetes_sync_include_offline = bool(data["kubernetes_sync_include_offline"])
             # Zigbee/Z-Wave: only the auto-sync activation is persisted. MQTT
             # connection config (host, port, credentials, topic, tls) is env-only
             # by design — never read from or written to this file.
@@ -410,6 +436,10 @@ class Settings(BaseSettings):
             "unraid_sync_enabled": self.unraid_sync_enabled,
             "unraid_sync_interval": self.unraid_sync_interval,
             "unraid_sync_include_offline": self.unraid_sync_include_offline,
+            # Kubernetes: only the auto-sync activation. URL/token/CA are env-only.
+            "kubernetes_sync_enabled": self.kubernetes_sync_enabled,
+            "kubernetes_sync_interval": self.kubernetes_sync_interval,
+            "kubernetes_sync_include_offline": self.kubernetes_sync_include_offline,
             # Zigbee/Z-Wave: only the auto-sync activation is persisted. MQTT
             # connection config (host/port/credentials/topic/tls) is env-only.
             "zigbee_sync_enabled": self.zigbee_sync_enabled,

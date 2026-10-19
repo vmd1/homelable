@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { RefreshCw, X, Loader2, StopCircle, Clock, ScanLine, Network, RadioTower, Server, Wifi, HardDrive, Inbox } from 'lucide-react'
+import { RefreshCw, X, Loader2, StopCircle, Clock, ScanLine, Network, RadioTower, Server, Wifi, HardDrive, Boxes, Inbox } from 'lucide-react'
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { scanApi } from '@/api/client'
@@ -24,15 +24,16 @@ interface ScanHistoryModalProps {
   demoRuns?: ScanRun[]
 }
 
-type KindFilter = 'all' | 'ip' | 'zigbee' | 'zwave' | 'proxmox' | 'unifi' | 'unraid'
+type KindFilter = 'all' | 'ip' | 'zigbee' | 'zwave' | 'proxmox' | 'unifi' | 'unraid' | 'kubernetes'
 
 /** Normalise a ScanRun.kind into one of the known display kinds. */
-function runKind(kind: string | undefined): 'ip' | 'zigbee' | 'zwave' | 'proxmox' | 'unifi' | 'unraid' {
+function runKind(kind: string | undefined): 'ip' | 'zigbee' | 'zwave' | 'proxmox' | 'unifi' | 'unraid' | 'kubernetes' {
   return kind === 'zigbee' ? 'zigbee'
     : kind === 'zwave' ? 'zwave'
     : kind === 'proxmox' ? 'proxmox'
     : kind === 'unifi' ? 'unifi'
     : kind === 'unraid' ? 'unraid'
+    : kind === 'kubernetes' ? 'kubernetes'
     : 'ip'
 }
 
@@ -43,6 +44,7 @@ const KIND_META = {
   proxmox: { label: 'Proxmox', color: '#e57000' },
   unifi: { label: 'UniFi', color: '#0559c9' },
   unraid: { label: 'Unraid', color: '#e22828' },
+  kubernetes: { label: 'Kubernetes', color: '#326ce5' },
 } as const
 type StatusFilter = 'all' | 'running' | 'done' | 'error' | 'cancelled'
 
@@ -62,6 +64,7 @@ const KIND_FILTERS: { key: KindFilter; label: string }[] = [
   { key: 'proxmox', label: 'Proxmox' },
   { key: 'unifi', label: 'UniFi' },
   { key: 'unraid', label: 'Unraid' },
+  { key: 'kubernetes', label: 'Kubernetes' },
 ]
 
 function statusColor(s: string): string {
@@ -117,7 +120,7 @@ export function ScanHistoryModal({ open, onClose, demoRuns }: ScanHistoryModalPr
           toast.error(`Scan failed: ${run.error ?? 'unknown error'}`)
         }
         if (prev?.status === 'running' && run.status === 'done') {
-          if (run.kind === 'zigbee' || run.kind === 'zwave' || run.kind === 'proxmox' || run.kind === 'unifi' || run.kind === 'unraid') {
+          if (run.kind === 'zigbee' || run.kind === 'zwave' || run.kind === 'proxmox' || run.kind === 'unifi' || run.kind === 'unraid' || run.kind === 'kubernetes') {
             const label = KIND_META[runKind(run.kind)].label
             // A done run can still carry a non-fatal advisory (e.g. Proxmox
             // imported hosts but the token couldn't see any VMs/LXC).
@@ -253,7 +256,7 @@ export function ScanHistoryModal({ open, onClose, demoRuns }: ScanHistoryModalPr
           {filtered.map((r) => {
             const kind = runKind(r.kind)
             const meta = KIND_META[kind]
-            const KindIcon = kind === 'zigbee' ? Network : kind === 'zwave' ? RadioTower : kind === 'proxmox' ? Server : kind === 'unifi' ? Wifi : kind === 'unraid' ? HardDrive : ScanLine
+            const KindIcon = kind === 'zigbee' ? Network : kind === 'zwave' ? RadioTower : kind === 'proxmox' ? Server : kind === 'unifi' ? Wifi : kind === 'unraid' ? HardDrive : kind === 'kubernetes' ? Boxes : ScanLine
             return (
               <div key={r.id} className="rounded-lg border border-border bg-[#161b22] p-3">
                 <div className="flex items-center gap-2">

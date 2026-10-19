@@ -12,11 +12,13 @@ from app.core.scheduler import (
     _run_status_checks,
     _run_zigbee_sync,
     _run_zwave_sync,
+    reschedule_kubernetes_sync,
     reschedule_proxmox_sync,
     reschedule_service_checks,
     reschedule_status_checks,
     reschedule_zigbee_sync,
     reschedule_zwave_sync,
+    set_kubernetes_sync_enabled,
     set_proxmox_sync_enabled,
     set_service_checks_enabled,
     set_unraid_sync_enabled,
@@ -331,6 +333,7 @@ def test_scheduler_uses_settings_interval():
         mock_settings.zwave_sync_enabled = False
         mock_settings.unifi_sync_enabled = False
         mock_settings.unraid_sync_enabled = False
+        mock_settings.kubernetes_sync_enabled = False
         start_scheduler()
         _, kwargs = mock_sched.add_job.call_args
         assert kwargs["seconds"] == 45
@@ -348,6 +351,7 @@ def test_start_and_stop_scheduler():
         mock_settings.zwave_sync_enabled = False
         mock_settings.unifi_sync_enabled = False
         mock_settings.unraid_sync_enabled = False
+        mock_settings.kubernetes_sync_enabled = False
         start_scheduler()
         stop_scheduler()
         mock_sched.add_job.assert_called_once()
@@ -445,6 +449,7 @@ def test_start_scheduler_adds_service_job_when_enabled():
         mock_settings.zwave_sync_enabled = False
         mock_settings.unifi_sync_enabled = False
         mock_settings.unraid_sync_enabled = False
+        mock_settings.kubernetes_sync_enabled = False
         start_scheduler()
     job_ids = [kw.get("id") for _, kw in mock_sched.add_job.call_args_list]
     assert "status_checks" in job_ids
@@ -674,6 +679,7 @@ def test_start_scheduler_adds_mesh_jobs_when_enabled():
         mock_settings.zwave_sync_interval = 3600
         mock_settings.unifi_sync_enabled = False
         mock_settings.unraid_sync_enabled = False
+        mock_settings.kubernetes_sync_enabled = False
         start_scheduler()
     job_ids = [kw.get("id") for _, kw in mock_sched.add_job.call_args_list]
     assert "zigbee_sync" in job_ids
@@ -747,6 +753,7 @@ def test_start_scheduler_floors_a_short_unraid_sync_interval():
         mock_settings.zigbee_sync_enabled = False
         mock_settings.zwave_sync_enabled = False
         mock_settings.unifi_sync_enabled = False
+        mock_settings.kubernetes_sync_enabled = False
         mock_settings.unraid_sync_enabled = True
         mock_settings.unraid_sync_interval = 5
         start_scheduler()
@@ -763,6 +770,7 @@ def test_start_scheduler_keeps_a_valid_unraid_sync_interval():
         mock_settings.zigbee_sync_enabled = False
         mock_settings.zwave_sync_enabled = False
         mock_settings.unifi_sync_enabled = False
+        mock_settings.kubernetes_sync_enabled = False
         mock_settings.unraid_sync_enabled = True
         mock_settings.unraid_sync_interval = 1800
         start_scheduler()
@@ -778,3 +786,47 @@ def test_set_unraid_sync_enabled_floors_a_short_interval():
         mock_settings.unraid_sync_interval = 5
         set_unraid_sync_enabled(True)
     assert _unraid_sync_seconds(mock_sched) == 300
+
+
+def _kubernetes_sync_seconds(mock_sched: MagicMock) -> int:
+    for _, kwargs in mock_sched.add_job.call_args_list:
+        if kwargs.get("id") == "kubernetes_sync":
+            return kwargs["seconds"]
+    raise AssertionError("kubernetes_sync job was not added")
+
+
+@pytest.mark.parametrize(("configured", "expected"), [(5, 300), (1800, 1800)])
+def test_start_scheduler_clamps_kubernetes_sync_interval(configured: int, expected: int):
+    """A sub-300s KUBERNETES_SYNC_INTERVAL from .env must not reach the scheduler."""
+    mock_sched = MagicMock()
+    with patch("app.core.scheduler.settings") as mock_settings, \
+         patch("app.core.scheduler.AsyncIOScheduler", return_value=mock_sched):
+        mock_settings.status_checker_interval = 60
+        mock_settings.service_check_enabled = False
+        mock_settings.proxmox_sync_enabled = False
+        mock_settings.zigbee_sync_enabled = False
+        mock_settings.zwave_sync_enabled = False
+        mock_settings.unifi_sync_enabled = False
+        mock_settings.unraid_sync_enabled = False
+        mock_settings.kubernetes_sync_enabled = True
+        mock_settings.kubernetes_sync_interval = configured
+        start_scheduler()
+        assert _kubernetes_sync_seconds(mock_sched) == expected
+
+
+def test_set_kubernetes_sync_enabled_adds_and_removes_the_job():
+    mock_sched = MagicMock()
+    mock_sched.running = True
+    with patch("app.core.scheduler.scheduler", mock_sched), patch("app.core.scheduler.settings") as mock_settings:
+        mock_settings.kubernetes_sync_interval = 900
+        mock_sched.get_job.return_value = None
+        set_kubernetes_sync_enabled(True)
+        assert _kubernetes_sync_seconds(mock_sched) == 900
+        mock_sched.get_job.return_value = object()
+        set_kubernetes_sync_enabled(False)
+        mock_sched.remove_job.assert_called_once_with("kubernetes_sync")
+
+
+def test_reschedule_kubernetes_sync_rejects_short_intervals():
+    with pytest.raises(ValueError):
+        reschedule_kubernetes_sync(60)

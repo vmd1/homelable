@@ -263,6 +263,39 @@ async def _run_unraid_sync() -> None:
     )
 
 
+async def _run_kubernetes_sync() -> None:
+    """Fetch the Kubernetes nodes and workloads and upsert them into pending (auto-sync)."""
+    if not settings.kubernetes_sync_enabled:
+        return
+    if not (settings.kubernetes_api_url and settings.kubernetes_token):
+        logger.warning("Kubernetes auto-sync enabled but API URL/token not configured - skipping")
+        return
+    from app.api.routes.kubernetes import _background_kubernetes_import
+    from app.db.models import ScanRun
+
+    async with AsyncSessionLocal() as db:
+        run = ScanRun(
+            status="running",
+            kind="kubernetes",
+            ranges=[settings.kubernetes_api_url],
+        )
+        db.add(run)
+        await db.commit()
+        await db.refresh(run)
+        run_id = run.id
+
+    await _background_kubernetes_import(
+        run_id,
+        settings.kubernetes_api_url,
+        settings.kubernetes_token,
+        settings.kubernetes_verify_tls,
+        settings.kubernetes_ca_file or None,
+        settings.kubernetes_namespace_list,
+        settings.kubernetes_include_system,
+        settings.kubernetes_sync_include_offline,
+    )
+
+
 async def _run_mesh_sync(kind: str) -> None:
     """Shared auto-sync for the MQTT mesh imports (Zigbee / Z-Wave).
 
@@ -367,6 +400,21 @@ def _unraid_sync_interval() -> int:
     return max(300, settings.unraid_sync_interval)
 
 
+def _kubernetes_sync_interval() -> int:
+    return max(300, settings.kubernetes_sync_interval)
+
+
+def _add_kubernetes_sync_job() -> None:
+    scheduler.add_job(
+        _run_kubernetes_sync,
+        "interval",
+        seconds=_kubernetes_sync_interval(),
+        id="kubernetes_sync",
+        max_instances=1,
+        coalesce=True,
+    )
+
+
 def _add_unraid_sync_job() -> None:
     scheduler.add_job(
         _run_unraid_sync,
@@ -434,6 +482,8 @@ def start_scheduler() -> None:
         _add_proxmox_sync_job()
     if settings.unraid_sync_enabled:
         _add_unraid_sync_job()
+    if settings.kubernetes_sync_enabled:
+        _add_kubernetes_sync_job()
     if settings.zigbee_sync_enabled:
         _add_zigbee_sync_job()
     if settings.zwave_sync_enabled:
@@ -537,6 +587,31 @@ def set_unraid_sync_enabled(enabled: bool) -> None:
     elif not enabled and job:
         scheduler.remove_job("unraid_sync")
         logger.info("Unraid auto-sync disabled")
+
+
+def reschedule_kubernetes_sync(interval_seconds: int) -> None:
+    """Update the Kubernetes auto-sync interval on the running scheduler (if enabled)."""
+    if interval_seconds < 300:
+        raise ValueError(f"interval_seconds must be >= 300, got {interval_seconds}")
+    if not scheduler.running:
+        logger.warning("Scheduler not running, skipping reschedule")
+        return
+    if scheduler.get_job("kubernetes_sync"):
+        scheduler.reschedule_job("kubernetes_sync", trigger="interval", seconds=interval_seconds)
+        logger.info("Kubernetes auto-sync rescheduled to every %ds", interval_seconds)
+
+
+def set_kubernetes_sync_enabled(enabled: bool) -> None:
+    """Add or remove the Kubernetes auto-sync job on the running scheduler."""
+    if not scheduler.running:
+        return
+    job = scheduler.get_job("kubernetes_sync")
+    if enabled and not job:
+        _add_kubernetes_sync_job()
+        logger.info("Kubernetes auto-sync enabled - every %ds", _kubernetes_sync_interval())
+    elif not enabled and job:
+        scheduler.remove_job("kubernetes_sync")
+        logger.info("Kubernetes auto-sync disabled")
 
 
 def reschedule_zigbee_sync(interval_seconds: int) -> None:
