@@ -11,7 +11,10 @@ renames and re-addressing) plus the object's name, so a re-import updates the
 same Device Inventory rows. A cluster node becomes a ``server``; a Deployment,
 StatefulSet or DaemonSet becomes a ``docker_container`` linked from every node
 that runs one of its pods. Kubernetes Services are attached to the workloads
-they select as service entries (LoadBalancer IP / NodePort / ClusterIP).
+they select. Only addresses reachable from outside the cluster become service
+entries (a LoadBalancer or external IP, or a NodePort on a node IP): a ClusterIP
+is unreachable from Homelable, so a service check against it would only fail.
+Cluster-internal Services are listed in a hidden "Internal Services" property.
 """
 
 from __future__ import annotations
@@ -202,41 +205,58 @@ def _selector_matches(selector: dict[str, str], labels: dict[str, str]) -> bool:
     return bool(selector) and all(labels.get(k) == v for k, v in selector.items())
 
 
-def _service_entries(svc: dict[str, Any]) -> list[dict[str, Any]]:
-    """Service entries (ip/port) for one Kubernetes Service, most reachable address first."""
+def _service_entries(svc: dict[str, Any], node_ip: str | None = None) -> list[dict[str, Any]]:
+    """Service entries for one Kubernetes Service's externally reachable addresses.
+
+    A LoadBalancer or external IP wins; otherwise a NodePort is reached on
+    ``node_ip`` (a node running the workload). A ClusterIP-only Service gives
+    no entry: nothing outside the cluster can reach it.
+    """
     spec = svc.get("spec") or {}
-    meta = svc.get("metadata") or {}
-    name = meta.get("name") or "service"
+    name = (svc.get("metadata") or {}).get("name") or "service"
     svc_type = spec.get("type") or "ClusterIP"
     lb = [
         i.get("ip") or i.get("hostname")
         for i in ((svc.get("status") or {}).get("loadBalancer") or {}).get("ingress") or []
         if isinstance(i, dict)
     ]
-    external = [str(a) for a in spec.get("externalIPs") or []]
-    cluster_ip = spec.get("clusterIP")
-    host = next((a for a in [*lb, *external] if a), None)
+    external = next((str(a) for a in [*lb, *(spec.get("externalIPs") or [])] if a), None)
+    ports = [p for p in spec.get("ports") or [] if isinstance(p, dict) and p.get("port")]
     entries: list[dict[str, Any]] = []
-    for p in spec.get("ports") or []:
-        if not isinstance(p, dict) or not p.get("port"):
+    for p in ports:
+        if external:
+            host, port, notes = external, int(p["port"]), f"Kubernetes {svc_type}"
+        elif node_ip and svc_type in ("NodePort", "LoadBalancer") and p.get("nodePort"):
+            host, port, notes = node_ip, int(p["nodePort"]), f"Kubernetes NodePort (service port {p['port']})"
+        else:
             continue
         port_name = p.get("name")
-        label = f"{name} ({port_name})" if port_name and len(spec.get("ports") or []) > 1 else name
-        entry: dict[str, Any] = {
-            "port": int(p["port"]),
+        entries.append({
+            "port": port,
             "protocol": str(p.get("protocol") or "TCP").lower(),
-            "service_name": label,
+            "service_name": f"{name} ({port_name})" if port_name and len(ports) > 1 else name,
+            "host": host,
             "path": "",
-            "notes": f"Kubernetes {svc_type}",
-        }
-        if host:
-            entry["host"] = host
-        elif cluster_ip and cluster_ip != "None":
-            entry["host"] = cluster_ip
-        if svc_type == "NodePort" and p.get("nodePort"):
-            entry["notes"] = f"Kubernetes NodePort {p['nodePort']}"
-        entries.append(entry)
+            "notes": notes,
+        })
     return entries
+
+
+def _internal_service(svc: dict[str, Any]) -> str | None:
+    """``ns/name:port,port`` for a Service, for the hidden Internal Services property."""
+    meta, spec = svc.get("metadata") or {}, svc.get("spec") or {}
+    ports = ",".join(str(p["port"]) for p in spec.get("ports") or [] if isinstance(p, dict) and p.get("port"))
+    return f"{meta.get('namespace')}/{meta.get('name')}:{ports}" if ports else None
+
+
+def _selected_services(
+    services: list[dict[str, Any]], ns: str, template_labels: dict[str, str]
+) -> list[dict[str, Any]]:
+    return [
+        svc for svc in services
+        if (svc.get("metadata") or {}).get("namespace") == ns
+        and _selector_matches((svc.get("spec") or {}).get("selector") or {}, template_labels)
+    ]
 
 
 def _workload_status(kind: str, raw: dict[str, Any]) -> str:
@@ -264,13 +284,7 @@ def _workload_node(
     if not name or not ns:
         return None
     template_labels = (((raw.get("spec") or {}).get("template") or {}).get("metadata") or {}).get("labels") or {}
-    entries: list[dict[str, Any]] = []
-    for svc in services:
-        if (svc.get("metadata") or {}).get("namespace") != ns:
-            continue
-        selector = (svc.get("spec") or {}).get("selector") or {}
-        if _selector_matches(selector, template_labels):
-            entries.extend(_service_entries(svc))
+    selected = _selected_services(services, ns, template_labels)
     containers = (((raw.get("spec") or {}).get("template") or {}).get("spec") or {}).get("containers") or []
     images = [c.get("image") for c in containers if isinstance(c, dict) and c.get("image")]
     ieee = f"k8s-{cluster_key}-wl-{ns}-{kind.lower()}-{name}"
@@ -289,7 +303,9 @@ def _workload_node(
         "namespace": ns,
         "workload_kind": kind,
         "replicas": (raw.get("spec") or {}).get("replicas"),
-        "services": entries,
+        "services": [],
+        "selected_services": selected,
+        "internal_services": [],
         "parent_ieee": None,
     }
 
@@ -361,6 +377,14 @@ def _parse_inventory(
             key = (ns, kind, workload["label"])
             parents = sorted(node_ids[n] for n in placements.get(key, ()) if n in node_ids)
             workload["parent_ieee"] = parents[0] if parents else None
+            node_ip = next((n["ip"] for n in nodes if n["id"] in parents and n.get("ip")), None)
+            selected = workload.pop("selected_services")
+            for svc in selected:
+                entries = _service_entries(svc, node_ip)
+                if entries:
+                    workload["services"].extend(entries)
+                elif (label := _internal_service(svc)):
+                    workload["internal_services"].append(label)
             edges.extend({"source": p, "target": workload["id"]} for p in parents)
     return nodes, edges
 
@@ -387,6 +411,7 @@ def build_kubernetes_properties(node: dict[str, Any]) -> list[dict[str, Any]]:
         add("Kind", node.get("workload_kind"))
         add("Replicas", node.get("replicas"))
         add("Images", ", ".join(node.get("images") or []))
+        add("Internal Services", ", ".join(node.get("internal_services") or []))
     props.append({"key": "Source", "value": "Kubernetes", "icon": None, "visible": False})
     return props
 
