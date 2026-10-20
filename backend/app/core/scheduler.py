@@ -267,7 +267,8 @@ async def _run_kubernetes_sync() -> None:
     """Fetch the Kubernetes nodes and workloads and upsert them into pending (auto-sync)."""
     if not settings.kubernetes_sync_enabled:
         return
-    if not (settings.kubernetes_api_url and settings.kubernetes_token):
+    api_url, token = settings.kubernetes_effective_api_url, settings.kubernetes_effective_token
+    if not (api_url and token):
         logger.warning("Kubernetes auto-sync enabled but API URL/token not configured - skipping")
         return
     from app.api.routes.kubernetes import _background_kubernetes_import
@@ -277,7 +278,7 @@ async def _run_kubernetes_sync() -> None:
         run = ScanRun(
             status="running",
             kind="kubernetes",
-            ranges=[settings.kubernetes_api_url],
+            ranges=[api_url],
         )
         db.add(run)
         await db.commit()
@@ -286,10 +287,10 @@ async def _run_kubernetes_sync() -> None:
 
     await _background_kubernetes_import(
         run_id,
-        settings.kubernetes_api_url,
-        settings.kubernetes_token,
+        api_url,
+        token,
         settings.kubernetes_verify_tls,
-        settings.kubernetes_ca_file or None,
+        settings.kubernetes_effective_ca_file or None,
         settings.kubernetes_namespace_list,
         settings.kubernetes_include_system,
         settings.kubernetes_sync_include_offline,

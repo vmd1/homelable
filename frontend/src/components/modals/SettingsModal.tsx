@@ -770,7 +770,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             {!(k8sConfig.token_configured && k8sConfig.api_url) ? (
               <p className="text-[10px] text-[#e3b341] leading-tight">
                 No Kubernetes cluster configured. Set <span className="font-mono">KUBERNETES_API_URL</span> and{' '}
-                <span className="font-mono">KUBERNETES_TOKEN</span> in the server .env to enable auto-sync.
+                <span className="font-mono">KUBERNETES_TOKEN</span> (or <span className="font-mono">KUBERNETES_TOKEN_FILE</span>)
+                in the server .env to enable auto-sync, or run the backend as a pod with a ServiceAccount.
               </p>
             ) : (
               <>

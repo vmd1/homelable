@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Features
 
 - Kubernetes import. A new backend service and router read the cluster API with a read-only ServiceAccount token and bring the nodes, Deployments, StatefulSets and DaemonSets into the Device Inventory (and optionally onto the canvas), with node -> workload links and the Services that select each workload. Configured under Import > Kubernetes, with optional scheduled sync in Settings. See `docs/kubernetes-import.md`.
+- The Kubernetes import works from a pod with no configuration: the API address, the pod's ServiceAccount token (re-read on every use, so rotation just works) and the cluster CA are picked up automatically. `KUBERNETES_TOKEN_FILE` reads the token from a file for other setups.
 
 ## [3.6.0] - 2026-10-07
 

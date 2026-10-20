@@ -36,14 +36,27 @@ so re-imports update the same rows and two clusters never collide.
 ## Credentials
 
 Create a read-only ServiceAccount with
-[`examples/kubernetes-readonly-rbac.yaml`](examples/kubernetes-readonly-rbac.yaml)
-and mint a token with `kubectl -n homelable create token homelable --duration=8760h`.
+[`examples/kubernetes-readonly-rbac.yaml`](examples/kubernetes-readonly-rbac.yaml).
+
+**Homelable running as a pod in the cluster (recommended).** Run the backend with
+that ServiceAccount (`serviceAccountName: homelable`) and set nothing else: the API
+address (`https://kubernetes.default.svc`), the pod's own token and the cluster CA
+are picked up from `/var/run/secrets/kubernetes.io/serviceaccount`. The token is
+re-read on every use, so Kubernetes' automatic rotation needs no handling.
+
+**Homelable outside the cluster, or a different cluster.** Set `KUBERNETES_API_URL`
+and either `KUBERNETES_TOKEN`, or `KUBERNETES_TOKEN_FILE` (a file, re-read on every
+use). For a short-lived token use `kubectl -n homelable create token homelable
+--duration=8760h`.
 
 The token is a credential: it is sent with a request, or read from the server
-`.env`, and is **never persisted or returned by the API**. A token left blank in
-the dialog falls back to `KUBERNETES_TOKEN`, only for the configured
-`KUBERNETES_API_URL`, only over `https://`, and never with TLS verification off
-when the server keeps it on. Redirects are not followed.
+configuration, and is **never persisted or returned by the API**. Precedence is
+`KUBERNETES_TOKEN`, then `KUBERNETES_TOKEN_FILE`, then the pod's own token. A token
+left blank in the dialog falls back to the configured one, only for the configured
+API address (an explicit `KUBERNETES_API_URL`, else the in-cluster one), only over
+`https://`, and never with TLS verification off when the server keeps it on. The
+pod's cluster CA is trusted only for the in-cluster address, never for an
+explicit `KUBERNETES_API_URL`. Redirects are not followed.
 
 If the token cannot list pods or services, workloads still import, without node
 links or services, and the run carries a warning.
@@ -52,10 +65,11 @@ links or services, and the run carries a warning.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `KUBERNETES_API_URL` | | API server, e.g. `https://192.168.1.10:6443` |
+| `KUBERNETES_API_URL` | in-cluster default | API server, e.g. `https://192.168.1.10:6443` |
 | `KUBERNETES_TOKEN` | | ServiceAccount token |
+| `KUBERNETES_TOKEN_FILE` | pod's own token | File holding the token, re-read on every use |
 | `KUBERNETES_VERIFY_TLS` | `true` | Verify the API server certificate |
-| `KUBERNETES_CA_FILE` | | Cluster CA bundle for a private CA (preferred over disabling verification) |
+| `KUBERNETES_CA_FILE` | pod's cluster CA (in-cluster only) | Cluster CA bundle for a private CA (preferred over disabling verification) |
 | `KUBERNETES_NAMESPACES` | | Comma-separated allowlist; empty = all but system |
 | `KUBERNETES_INCLUDE_SYSTEM` | `false` | Also import system namespaces when no allowlist is set |
 

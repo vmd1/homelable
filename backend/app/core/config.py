@@ -68,6 +68,19 @@ def _read_version() -> str:
 
 APP_VERSION = _read_version()
 
+# Where Kubernetes mounts a pod's ServiceAccount credentials, and the API address that
+# resolves from inside every cluster. Functions, so tests can point them elsewhere.
+KUBERNETES_SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+KUBERNETES_IN_CLUSTER_URL = "https://kubernetes.default.svc"
+
+
+def _in_cluster_dir() -> Path:
+    return Path(KUBERNETES_SA_DIR)
+
+
+def _in_cluster_token_path() -> Path:
+    return _in_cluster_dir() / "token"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
@@ -247,6 +260,9 @@ class Settings(BaseSettings):
     # persisted.
     kubernetes_api_url: str = ""  # e.g. https://192.168.1.10:6443
     kubernetes_token: str = ""
+    # Path to a file holding the token, re-read on every use so a rotating
+    # projected ServiceAccount token keeps working.
+    kubernetes_token_file: str = ""
     kubernetes_verify_tls: bool = True
     kubernetes_ca_file: str = ""  # path to the cluster CA bundle (used when verifying)
     kubernetes_namespaces: str = ""  # comma-separated allowlist; empty = all but system
@@ -319,6 +335,36 @@ class Settings(BaseSettings):
             parsed = urlsplit(self.unifi_url)
             return parsed.hostname or self.unifi_url
         return self.unifi_host
+
+    @property
+    def kubernetes_effective_api_url(self) -> str:
+        """KUBERNETES_API_URL, else the in-cluster API when running in a pod with a ServiceAccount."""
+        if self.kubernetes_api_url:
+            return self.kubernetes_api_url
+        return KUBERNETES_IN_CLUSTER_URL if _in_cluster_token_path().is_file() else ""
+
+    @property
+    def kubernetes_effective_token(self) -> str:
+        """The bearer token: KUBERNETES_TOKEN, else the contents of KUBERNETES_TOKEN_FILE,
+        else the pod's own ServiceAccount token. A file is read afresh each call (it rotates)."""
+        if self.kubernetes_token:
+            return self.kubernetes_token
+        path = Path(self.kubernetes_token_file) if self.kubernetes_token_file else _in_cluster_token_path()
+        try:
+            return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+        except OSError as exc:
+            logger.warning("Cannot read the Kubernetes token file %s: %s", path, exc.strerror)
+            return ""
+
+    @property
+    def kubernetes_effective_ca_file(self) -> str:
+        """KUBERNETES_CA_FILE, else the in-cluster ServiceAccount CA when the API URL is the
+        in-cluster default (so a custom API URL never trusts the pod's cluster CA by accident)."""
+        if self.kubernetes_ca_file:
+            return self.kubernetes_ca_file
+        ca = _in_cluster_dir() / "ca.crt"
+        in_cluster = not self.kubernetes_api_url and _in_cluster_token_path().is_file()
+        return str(ca) if in_cluster and ca.is_file() else ""
 
     @property
     def kubernetes_namespace_list(self) -> list[str]:
