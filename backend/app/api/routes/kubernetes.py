@@ -67,7 +67,8 @@ def _resolve_token(payload: KubernetesConnectionRequest) -> str:
     if payload.token:
         return payload.token
 
-    if not settings.kubernetes_api_url or not _same_api(payload.api_url, settings.kubernetes_api_url):
+    api_url = settings.kubernetes_effective_api_url
+    if not api_url or not _same_api(payload.api_url, api_url):
         raise HTTPException(
             status_code=400,
             detail="Custom Kubernetes API servers require an explicit token",
@@ -83,20 +84,20 @@ def _resolve_token(payload: KubernetesConnectionRequest) -> str:
             status_code=400,
             detail="The server-configured Kubernetes token requires TLS verification",
         )
-    if not settings.kubernetes_token:
+    token = settings.kubernetes_effective_token
+    if not token:
         raise HTTPException(
             status_code=400,
             detail="No Kubernetes token provided and none configured on the server.",
         )
-    return settings.kubernetes_token
+    return token
 
 
 def _ca_file_for(payload: KubernetesConnectionRequest) -> str | None:
     """The server's CA bundle applies only to the configured API server."""
-    if settings.kubernetes_ca_file and settings.kubernetes_api_url and _same_api(
-        payload.api_url, settings.kubernetes_api_url
-    ):
-        return settings.kubernetes_ca_file
+    api_url = settings.kubernetes_effective_api_url
+    if settings.kubernetes_effective_ca_file and api_url and _same_api(payload.api_url, api_url):
+        return settings.kubernetes_effective_ca_file
     return None
 
 
@@ -196,22 +197,23 @@ async def sync_kubernetes_now(
     _: str = Depends(get_current_user),
 ) -> ScanRun:
     """Trigger an immediate Kubernetes sync using the server env config."""
-    if not (settings.kubernetes_api_url and settings.kubernetes_token):
+    api_url, token = settings.kubernetes_effective_api_url, settings.kubernetes_effective_token
+    if not (api_url and token):
         raise HTTPException(
             status_code=400,
             detail="Cannot sync: no Kubernetes API URL/token configured on the server.",
         )
-    run = ScanRun(status="running", kind="kubernetes", ranges=[settings.kubernetes_api_url])
+    run = ScanRun(status="running", kind="kubernetes", ranges=[api_url])
     db.add(run)
     await db.commit()
     await db.refresh(run)
     background_tasks.add_task(
         _background_kubernetes_import,
         run.id,
-        settings.kubernetes_api_url,
-        settings.kubernetes_token,
+        api_url,
+        token,
         settings.kubernetes_verify_tls,
-        settings.kubernetes_ca_file or None,
+        settings.kubernetes_effective_ca_file or None,
         settings.kubernetes_namespace_list,
         settings.kubernetes_include_system,
         settings.kubernetes_sync_include_offline,
@@ -379,14 +381,14 @@ async def _replace_links(
 async def get_kubernetes_config(_: str = Depends(get_current_user)) -> KubernetesConfig:
     """Return non-secret Kubernetes config. Never includes the token."""
     return KubernetesConfig(
-        api_url=settings.kubernetes_api_url,
+        api_url=settings.kubernetes_effective_api_url,
         verify_tls=settings.kubernetes_verify_tls,
         namespaces=settings.kubernetes_namespace_list,
         include_system=settings.kubernetes_include_system,
         sync_enabled=settings.kubernetes_sync_enabled,
         sync_interval=settings.kubernetes_sync_interval,
         include_offline=settings.kubernetes_sync_include_offline,
-        token_configured=bool(settings.kubernetes_token),
+        token_configured=bool(settings.kubernetes_effective_token),
     )
 
 
@@ -397,10 +399,10 @@ async def save_kubernetes_config(
 ) -> KubernetesConfig:
     """Persist the auto-sync activation and apply it live.
 
-    Connection settings (API URL, token, CA, TLS, namespaces) are env-only and
+    Connection settings (API URL, token or token file, CA, TLS, namespaces) are env-only and
     are never accepted or persisted here.
     """
-    if payload.sync_enabled and not (settings.kubernetes_api_url and settings.kubernetes_token):
+    if payload.sync_enabled and not (settings.kubernetes_effective_api_url and settings.kubernetes_effective_token):
         raise HTTPException(
             status_code=400,
             detail="Cannot enable auto-sync: no Kubernetes API URL/token configured in the server env.",
